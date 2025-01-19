@@ -1,0 +1,94 @@
+- hosts: localhost
+  become: yes
+
+  vars_prompt:
+    - name: "container_name"
+      prompt: "Enter the name of the container"
+    - name: "container_user"
+      prompt: "Enter the username for the non-root user in the container"
+    - name: "root_password"
+      prompt: "Enter root password for the container"
+      private: yes
+    - name: "user_password"
+      prompt: "Enter password for the non-root user"
+      private: yes
+
+  vars:
+    container_path: "/var/lib/machines/{{ container_name }}"
+
+  tasks:
+    - name: Ensure debootstrap is installed
+      apt:
+        name: debootstrap
+        state: present
+
+    - name: Create container filesystem
+      command: >
+        debootstrap stable {{ container_path }} http://deb.debian.org/debian
+
+    - name: Set hostname
+      copy:
+        content: "{{ container_name }}"
+        dest: "{{ container_path }}/etc/hostname"
+
+    - name: Start container and set root password
+      shell: |
+        echo -e "{{ root_password }}\n{{ root_password }}" | systemd-nspawn -D {{ container_path }} passwd
+
+    - name: Create DHCP service
+      copy:
+        content: |
+          [Unit]
+          Description=Start DHCP client on host0 interface
+          After=network.target
+
+          [Service]
+          ExecStart=/usr/sbin/dhclient host0
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: "{{ container_path }}/etc/systemd/system/dhcp.service"
+
+    - name: Enable DHCP service in container
+      command: >
+        systemd-nspawn -D {{ container_path }} systemctl enable dhcp.service
+
+    - name: Install dbus, sudo, and zsh in container
+      command: >
+        systemd-nspawn -D {{ container_path }} apt update && apt install -y dbus sudo zsh
+
+    - name: Create a non-root user and set password in container
+      shell: |
+        systemd-nspawn -D {{ container_path }} bash -c "
+          useradd -m -s /usr/bin/zsh {{ container_user }} &&
+          usermod -aG sudo {{ container_user }} &&
+          echo -e '{{ user_password }}\n{{ user_password }}' | passwd {{ container_user }}"
+      no_log: true
+
+    - name: Disable root login in container
+      command: >
+        systemd-nspawn -D {{ container_path }} bash -c
+        "sed -i 's|^root:.*$|root:x:0:0:root:/root:/usr/sbin/nologin|' /etc/passwd"
+
+    - name: Create systemd service for container on host
+      copy:
+        content: |
+          [Unit]
+          Description={{ container_name }} container
+          After=network.target
+
+          [Service]
+          ExecStart=/usr/bin/systemd-nspawn --boot --network-bridge=br0 -D {{ container_path }}
+          Restart=always
+          User=root
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: "/etc/systemd/system/{{ container_name }}-container.service"
+
+    - name: Enable and start container service on host
+      systemd:
+        name: "{{ container_name }}-container.service"
+        enabled: true
+        state: started
