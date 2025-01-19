@@ -13,6 +13,8 @@ Then reboot
 
 # Container setup
 
+This part is implemented in the `build_container.yaml` Ansible playbook.
+
 ## Create container FS
 
 ```

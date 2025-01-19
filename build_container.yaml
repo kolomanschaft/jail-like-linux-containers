@@ -33,7 +33,7 @@
 
     - name: Start container and set root password
       shell: |
-        echo -e "{{ root_password }}\n{{ root_password }}" | systemd-nspawn -D {{ container_path }} passwd
+        systemd-nspawn -D {{ container_path }} bash -c "echo 'root:{{ root_password }}' | chpasswd"
 
     - name: Create DHCP service
       copy:
@@ -56,7 +56,7 @@
 
     - name: Install dbus, sudo, and zsh in container
       command: >
-        systemd-nspawn -D {{ container_path }} apt update && apt install -y dbus sudo zsh
+        systemd-nspawn -D {{ container_path }} bash -c "apt update && apt install -y dbus sudo zsh"
 
     - name: Create a non-root user and set password in container
       shell: |
