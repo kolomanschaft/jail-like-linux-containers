@@ -1,3 +1,7 @@
+# Jail like Linux containers on Raspberry Pi OS
+
+When I bought my new Raspberry Pi 5 I wanted to have something similar like Jails on my FreeBSD server. I did a little research and ended up using `systemd-nspawn` containers on Raspberry Pi OS. To make creating new containers easier in the future, I wrote down this little recipe. I also implemented the container setup in an Ansible playbook `build_container.yaml`.
+
 # Host setup
 
 ## Setup a network bridge `br0`

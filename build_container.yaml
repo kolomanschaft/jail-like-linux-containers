@@ -3,14 +3,14 @@
 
   vars_prompt:
     - name: "container_name"
-      prompt: "Enter the name of the container"
+      prompt: "Enter the name of the container. This will also be the hostname on the network."
     - name: "container_user"
-      prompt: "Enter the username for the non-root user in the container"
-    - name: "root_password"
-      prompt: "Enter root password for the container"
-      private: yes
+      prompt: "The container gets a non-root standard user. Enter a username."
     - name: "user_password"
-      prompt: "Enter password for the non-root user"
+      prompt: "Enter password for the non-root user."
+      private: yes
+    - name: "root_password"
+      prompt: "Enter root password for the container. (root login will be disabled)"
       private: yes
 
   vars:
