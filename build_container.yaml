@@ -1,42 +1,49 @@
-- hosts: localhost
-  become: yes
-
-  vars_prompt:
-    - name: "container_name"
-      prompt: "Enter the name of the container. This will also be the hostname on the network."
-    - name: "container_user"
-      prompt: "The container gets a non-root standard user. Enter a username."
-    - name: "user_password"
-      prompt: "Enter password for the non-root user."
-      private: yes
-    - name: "root_password"
-      prompt: "Enter root password for the container. (root login will be disabled)"
-      private: yes
+- name: Play for creating a jail-like systemd-nspawn container
+  hosts: container_host
+  become: true
 
   vars:
+    container_apt_packages:
+      - sudo
+      - zsh
+      - git
+      - dbus
+      - fortune-mod
+      - cowsay
+    container_user_shell: /usr/bin/zsh
+    network_bridge_if_name: br0
+    debian_suite: stable
+    debian_mirror: http://deb.debian.org/debian
     container_path: "/var/lib/machines/{{ container_name }}"
+    container_user_home: "{{ container_path }}/home/{{ container_user }}"
+
+  vars_prompt:
+    - name: "container_user_pw"
+      prompt: "container user password"
+      private: true
 
   tasks:
-    - name: Ensure debootstrap is installed
-      apt:
-        name: debootstrap
+    - name: Ensure debootstrap and git is installed
+      ansible.builtin.apt:
+        name:
+          - debootstrap
+          - git
         state: present
 
     - name: Create container filesystem
-      command: >
-        debootstrap stable {{ container_path }} http://deb.debian.org/debian
+      ansible.builtin.command: >
+        debootstrap {{ debian_suite }} {{ container_path }} {{ debian_mirror }}
+      args:
+        creates: "{{ container_path }}"
 
     - name: Set hostname
-      copy:
+      ansible.builtin.copy:
         content: "{{ container_name }}"
         dest: "{{ container_path }}/etc/hostname"
-
-    - name: Start container and set root password
-      shell: |
-        systemd-nspawn -D {{ container_path }} bash -c "echo 'root:{{ root_password }}' | chpasswd"
+        mode: "0644"
 
     - name: Create DHCP service
-      copy:
+      ansible.builtin.copy:
         content: |
           [Unit]
           Description=Start DHCP client on host0 interface
@@ -49,27 +56,68 @@
           [Install]
           WantedBy=multi-user.target
         dest: "{{ container_path }}/etc/systemd/system/dhcp.service"
+        force: false
+        mode: '0644'
 
-    - name: Enable DHCP service in container
-      command: >
-        systemd-nspawn -D {{ container_path }} systemctl enable dhcp.service
+    - name: Check if DHCP service is already enabled in the container
+      ansible.builtin.command:
+        cmd: systemd-nspawn -D "{{ container_path }}" systemctl is-enabled dhcp.service
+      register: dhcp_service_status
+      become: true
+      changed_when: false
+      failed_when: false
 
-    - name: Install dbus, sudo, and zsh in container
-      command: >
-        systemd-nspawn -D {{ container_path }} bash -c "apt update && apt install -y dbus sudo zsh"
+    - name: Enable DHCP service in container if not already enabled
+      ansible.builtin.command:
+        cmd: systemd-nspawn -D "{{ container_path }}" systemctl enable dhcp.service
+      become: true
+      when: dhcp_service_status.rc != 0
 
-    - name: Create a non-root user and set password in container
-      shell: |
-        systemd-nspawn -D {{ container_path }} bash -c "
-          useradd -m -s /usr/bin/zsh {{ container_user }} &&
-          usermod -aG sudo {{ container_user }} &&
-          echo -e '{{ user_password }}\n{{ user_password }}' | passwd {{ container_user }}"
+    - name: Check if required packages [{{ container_apt_packages|join(',') }}] are installed in the container
+      ansible.builtin.command:
+        cmd: systemd-nspawn -D "{{ container_path }}" dpkg -s {{ container_apt_packages|join(' ') }}
+      changed_when: false
+      failed_when: false
+      register: packages_check
+      become: true
+
+    - name: Install required packages [{{ container_apt_packages|join(',') }}] if not installed
+      ansible.builtin.command:
+        cmd: systemd-nspawn -D "{{ container_path }}" apt install -y {{ container_apt_packages|join(' ') }}
+      become: true
+      when: packages_check.rc != 0
+
+    - name: Debug install
+      ansible.builtin.debug:
+        msg: systemd-nspawn -D "{{ container_path }}" apt install -y {{ container_apt_packages|join(' ') }}
+
+    - name: Check if non-root user is already present in container
+      ansible.builtin.command:
+        cmd: "grep '^{{ container_user }}:.*$' {{ container_path }}/etc/passwd"
+      register: found_container_user
+      become: true
+      changed_when: false
+      failed_when: false
+
+    - name: Create a non-root user in container
+      ansible.builtin.shell: |
+          systemd-nspawn -D {{ container_path }} bash -c "
+            set -o pipefail &&
+            useradd -m -s {{ container_user_shell }} {{ container_user }} &&
+            usermod -aG sudo {{ container_user }} &&
+            echo -e '{{ container_user_pw }}\n{{ container_user_pw }}' | passwd {{ container_user }}"
       no_log: true
+      become: true
+      when: found_container_user.rc != 0
 
-    - name: Disable root login in container
-      command: >
-        systemd-nspawn -D {{ container_path }} bash -c
-        "sed -i 's|^root:.*$|root:x:0:0:root:/root:/usr/sbin/nologin|' /etc/passwd"
+    - name: Clone dotfiles for standard user
+      ansible.builtin.git:
+        repo: https://github.com/kolomanschaft/dotfiles
+        dest: "{{ container_user_home }}/.dotfiles"
+        version: "master"
+      notify:
+        - Create .zshrc symlink
+        - Make sure everything in the users home folder is owned by the user
 
     - name: Create systemd service for container on host
       copy:
@@ -79,16 +127,33 @@
           After=network.target
 
           [Service]
-          ExecStart=/usr/bin/systemd-nspawn --boot --network-bridge=br0 -D {{ container_path }}
+          ExecStart=/usr/bin/systemd-nspawn --boot --network-bridge={{ network_bridge_if_name }} -D {{ container_path }}
           Restart=always
           User=root
 
           [Install]
           WantedBy=multi-user.target
         dest: "/etc/systemd/system/{{ container_name }}-container.service"
+        force: false
+        mode: '0644'
+
+    - name: Run all handlers before starting the container
+      meta: flush_handlers
 
     - name: Enable and start container service on host
       systemd:
         name: "{{ container_name }}-container.service"
         enabled: true
         state: started
+
+  handlers:
+    - name: Create .zshrc symlink
+      ansible.builtin.file:
+        src: ".dotfiles/zshrc"
+        dest: "{{ container_user_home }}/.zshrc"
+        state: link
+        force: true
+
+    - name: Make sure everything in the users home folder is owned by the user
+      ansible.builtin.command:
+        cmd: systemd-nspawn -D "{{ container_path }}" chown -R {{ container_user }}:{{ container_user }} /home/{{ container_user }}

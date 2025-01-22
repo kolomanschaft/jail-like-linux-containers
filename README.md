@@ -1,8 +1,10 @@
 # Jail like Linux containers on Raspberry Pi OS
 
-When I bought my new Raspberry Pi 5 I wanted to have something similar like Jails on my FreeBSD server. I did a little research and ended up using `systemd-nspawn` containers on Raspberry Pi OS. To make creating new containers easier in the future, I wrote down this little recipe. I also implemented the container setup in an Ansible playbook `build_container.yaml`.
+When I bought my new Raspberry Pi 5 I wanted to have something similar like Jails on my FreeBSD server. I did a little research and ended up using `systemd-nspawn` containers on Raspberry Pi OS. To make creating new containers easier in the future, I implemented the container setup in an Ansible playbook `build_container.yaml`.
 
 # Host setup
+
+As a pre-requisite you have to set up a network bridge on Raspberry Pi OS. My choice was to have the container interfaces bridged with the host interface. The containers will then appear as separate hosts on the network and trying to obtain an IP address via DHCP as the Pi does itself.
 
 ## Setup a network bridge `br0`
 
@@ -13,142 +15,21 @@ sudo nmcli connection modify br0 ipv4.method auto && \
 sudo nmcli connection up br0
 ```
 
-Then reboot
+Then reboot.
+
+Note: If you are on a SSH connection, be sure to execute all the commands at once, like in the listing. Otherwise you will break your SSH connection in the process. Ask me how I know...
 
 # Container setup
 
-This part is implemented in the `build_container.yaml` Ansible playbook.
+This part is implemented in the `build_container.yaml` Ansible playbook. Install Ansible and execute the playbook. 
 
-## Create container FS
+The playbook sets up a Debian root file system with the current Debian stable release. Change the `debian_suite` variable in the playbook if you want a different release.
 
-```
-sudo debootstrap stable /var/lib/machines/<container-name> http://deb.debian.org/debian
-```
+The playbook requires these variables to be set (e.g. via `vars` in the the inventory):
 
-Change the hostname by editing
+* `container_name`: The name of the container. This will also be the hostname on the network.
+* `container_user`: The playbook sets up a non-root user in the container. The playbook will prompt you for a password for the user when you play it.
 
-```
-/var/lib/machines/<container-name>/etc/hostname
-```
+After you container is set up, it boots automatically after you boot your Pi. It uses a systemd service called `<container_name>-container.service` for that.
 
-## Set root password in container
-
-First start container using
-
-```
-sudo systemd-nspawn -D /var/lib/machines/<container-name>
-```
-
-Then use `passwd` to set new root password.
-Finally type `exit` to shut the container down.
-
-## Boot container
-
-To properly boot the container use
-```
-sudo systemd-nspawn --boot --network-bridge=br0 -D /var/lib/machines/<container-name>
-```
-
-## Setup DHCP
-
-In the container create a new systemd service file
-
-```
-nano /etc/systemd/system/dhcp.service
-```
-
-This is the content of the service file:
-
-```
-[Unit]
-Description=Start DHCP client on host0 interface
-After=network.target
-
-[Service]
-ExecStart=/usr/sbin/dhclient host0
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable the service via
-
-```
-systemctl enable dhcp.service
-```
-
-Test it by shuting down the container (`shutdown now`) and reboot it with the command from above.
-
-## Setup non-root user
-
-First install `sudo`.
-
-```
-apt install sudo
-```
-
-Create a new user (assuming zsh is already installed).
-
-```
-useradd -m -s /usr/bin/zsh <user>
-```
-
-Add the user to the sudo group.
-
-```
-usermod -aG sudo <user>
-```
-
-Log out via `logout`, try to login with the new user and try to execute a sudo command. This way you can be sure that you don't lock yourselve out during the next step.
-
-Now deactivate login via root. Edit `/etc/passwd`, find the line for root (probably the first one) and change the shell to `/usr/sbin/nologin`:
-
-```
-root:x:0:0:root:/root:/usr/sbin/nologin
-```
-
-Logout and try to login as root. Should not be possible now.
-
-## Automatically start the container during boot as systemd service
-
-When starting the container as service you will rely on `machinectl` to open a shell in the container. Therefore dbus is needed in the container.
-
-```
-sudo apt install dbus
-```
-
-Create a new service file on the host.
-
-```
-/etc/systemd/system/<container-name>-container.service
-```
-
-This is the content of the file.
-
-```
-[Unit]
-Description=<container-name> container
-After=network.target
-
-[Service]
-ExecStart=/usr/bin/systemd-nspawn --boot --network-bridge=br0 -D /var/lib/machines/<container-name>
-Restart=always
-User=root
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable the service and start it.
-
-```
-sudo systemctl enable <container-name>-container.service
-sudo systemctl start <container-name>-container.service
-```
-
-You can now login via machinectl.
-
-```
-machinectl shell <user>@<container-name>
-```
+You can list all running containers with `machinectl list`. You can login to a container via `machinectl shell <container_user>@<container_name>`.
