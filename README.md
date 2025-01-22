@@ -4,9 +4,9 @@ When I bought my new Raspberry Pi 5 I wanted to have something similar like Jail
 
 # Host setup
 
-As a pre-requisite you have to set up a network bridge on Raspberry Pi OS. My choice was to have the container interfaces bridged with the host interface. The containers will then appear as separate hosts on the network and trying to obtain an IP address via DHCP as the Pi does itself.
-
 ## Setup a network bridge `br0`
+
+As a pre-requisite you have to set up a network bridge on Raspberry Pi OS. My choice was to have the container interfaces bridged with the host interface. The containers will then appear as separate hosts on the network and trying to obtain an IP address via DHCP as the Pi does itself. The container playbook assumes that there is a network bridge called `br0`.
 
 ```
 sudo nmcli connection add type bridge con-name br0 ifname br0 && \
@@ -33,3 +33,24 @@ The playbook requires these variables to be set (e.g. via `vars` in the the inve
 After you container is set up, it boots automatically after you boot your Pi. It uses a systemd service called `<container_name>-container.service` for that.
 
 You can list all running containers with `machinectl list`. You can login to a container via `machinectl shell <container_user>@<container_name>`.
+
+## Example usage
+
+I define a basic inventory with only my Raspberry Pi in it:
+
+**inventory.yaml**
+
+```yaml
+raspis:
+  hosts:
+    container_host:
+      ansible_host: myraspi
+      container_name: grafana
+      container_user: batman
+```
+
+Then I execute the playbook with
+
+```bash
+ansible-playbook build_container.yaml -i inventory.yaml --ask-become-pass
+```

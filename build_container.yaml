@@ -23,6 +23,18 @@
       private: true
 
   tasks:
+
+    - name: Check if the container service already exists
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/{{ container_name }}-container.service"
+      register: container_service_file
+
+    - name: Stop the container service if it exists and is running
+      ansible.builtin.systemd:
+        name: "{{ container_name }}-container.service"
+        state: stopped
+      when: container_service_file.stat.exists
+
     - name: Ensure debootstrap and git is installed
       ansible.builtin.apt:
         name:
@@ -120,7 +132,7 @@
         - Make sure everything in the users home folder is owned by the user
 
     - name: Create systemd service for container on host
-      copy:
+      ansible.builtin.copy:
         content: |
           [Unit]
           Description={{ container_name }} container
@@ -138,10 +150,10 @@
         mode: '0644'
 
     - name: Run all handlers before starting the container
-      meta: flush_handlers
+      ansible.builtin.meta: flush_handlers
 
     - name: Enable and start container service on host
-      systemd:
+      ansible.builtin.systemd:
         name: "{{ container_name }}-container.service"
         enabled: true
         state: started
