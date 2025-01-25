@@ -99,10 +99,6 @@
       become: true
       when: packages_check.rc != 0
 
-    - name: Debug install
-      ansible.builtin.debug:
-        msg: systemd-nspawn -D "{{ container_path }}" apt install -y {{ container_apt_packages|join(' ') }}
-
     - name: Check if non-root user is already present in container
       ansible.builtin.command:
         cmd: "grep '^{{ container_user }}:.*$' {{ container_path }}/etc/passwd"
