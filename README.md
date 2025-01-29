@@ -54,3 +54,25 @@ Then I execute the playbook with
 ```bash
 ansible-playbook build_container.yaml -i inventory.yaml --ask-become-pass
 ```
+
+## ZFS
+
+I like ZFS and I like my containers in separate datasets. For this to work, your `/var/lib/machines` folder needs to be the root dataset of a zpool.
+
+**Example:**
+
+In this example I'll call my zpool "machines".
+
+```
+sudo zpool create machines /dev/nvme0n1
+sudo zfs set mountpoint=/var/lib/machines machines
+```
+
+Use these additional Ansible variables (e.g. define them in your inventory):
+
+```yaml
+zfs_dataset_container: true
+zfs_pool: machines
+```
+
+The playbook will then create a new dataset for each container. 🎉
